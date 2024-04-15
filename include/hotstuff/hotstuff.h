@@ -192,10 +192,11 @@ class HotStuffBase: public HotStuffCore {
     std::unordered_map<uint256_t,std::pair<uint32_t, uint32_t>> exec_client_rsp;
 
     std::mutex commit_set_mutex;
-    std::vector<std::pair<std::pair<uint256_t, uint64_t>, NetAddr>> commit_set;
+    std::vector<std::pair<std::pair<uint256_t, std::pair<uint64_t, uint64_t>>, NetAddr>> commit_set;
     std::vector<std::pair<uint64_t, uint32_t>> stable_point_errors;
-    static bool commit_set_cmp(const std::pair<std::pair<uint256_t, uint64_t>, NetAddr>&a, const std::pair<std::pair<uint256_t, uint64_t>, NetAddr>&b) {
-        return a.first.second < b.first.second;
+    static bool commit_set_cmp(const std::pair<std::pair<uint256_t, std::pair<uint64_t, uint64_t>>, NetAddr>&a, const std::pair<std::pair<uint256_t, std::pair<uint64_t, uint64_t>>, NetAddr>&b) {
+        //     timestamp              random noise            timestamp              random noise
+        return a.first.second.first + a.first.second.second < b.first.second.first + b.first.second.second;
     }
 
     using Net = PeerNetwork<opcode_t>;

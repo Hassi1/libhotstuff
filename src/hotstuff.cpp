@@ -450,6 +450,7 @@ HotStuffBase::HotStuffBase(uint32_t blk_size,
 void HotStuffBase::check_stable_point_index(uint256_t commit_set_hash, uint64_t stable_timestamp, uint32_t stable_idx) {
     // a dummy implementation that only checks the time interval of the batch and the number of commands in the batch
 
+  /*
     std::lock_guard<std::mutex> guard(commit_set_mutex);
     if (stable_point_idx < stable_idx) {
         std::sort(commit_set.begin() + stable_point_idx, commit_set.end(), commit_set_cmp);
@@ -468,6 +469,7 @@ void HotStuffBase::check_stable_point_index(uint256_t commit_set_hash, uint64_t 
 
     // error detected, log the error
     stable_point_errors.push_back(std::make_pair(stable_timestamp, stable_idx));    
+  */
 }
 
 void HotStuffBase::server_consensus_request_cmd_handler(MsgConsensusReqCmd &&msg, const Net::conn_t &conn) {
@@ -602,16 +604,18 @@ void HotStuffBase::start(
 
                  std::lock_guard<std::mutex> guard(commit_set_mutex);
                  uint32_t commit_set_size = commit_set.size();
-                 std::sort(commit_set.begin() + stable_point_idx, commit_set.end(), commit_set_cmp);
+                 std::sort(commit_set.begin() + stable_point_idx, commit_set.end(), commit_set_cmp);  // order by (timestamp + noise)
                  uint32_t next_stable_point_idx = stable_point_idx;
-                 uint64_t batch_end_timestamp = commit_set[commit_set_size - 1].first.second - liveness_delta * 1000;
+                 uint64_t batch_end_timestamp = commit_set[commit_set_size - 1].first.second.first - liveness_delta * 1000;
                  for(; next_stable_point_idx < commit_set_size; next_stable_point_idx++) {
-                     if (commit_set[next_stable_point_idx].first.second > batch_end_timestamp)
+    		     if (commit_set[next_stable_point_idx].first.second.first   // timestamp
+		       + commit_set[next_stable_point_idx].first.second.second  // noise
+			 > batch_end_timestamp)
                          break;
                  }
                  uint32_t start = stable_point_idx;
                  uint64_t end = next_stable_point_idx;
-                 // stable_point = commit_set[stable_point].first.second;
+                 // stable_point = commit_set[stable_point].first.second.first;
                  stable_point_idx = next_stable_point_idx;
 
                  // a dummy implementation that only checks the time interval of the batch and the number of commands in the batch
