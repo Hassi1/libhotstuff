@@ -604,9 +604,9 @@ void HotStuffBase::start(
 
                  std::lock_guard<std::mutex> guard(commit_set_mutex);
                  uint32_t commit_set_size = commit_set.size();
-                 std::sort(commit_set.begin() + stable_point_idx, commit_set.end(), commit_set_cmp);  // order by (timestamp + noise)
                  uint32_t next_stable_point_idx = stable_point_idx;
                  uint64_t batch_end_timestamp = commit_set[commit_set_size - 1].first.second.first - liveness_delta * 1000;
+                 std::sort(commit_set.begin() + stable_point_idx, commit_set.end(), commit_set_cmp);  // order by (timestamp + noise)
                  for(; next_stable_point_idx < commit_set_size; next_stable_point_idx++) {
     		     if (commit_set[next_stable_point_idx].first.second.first   // timestamp
 		       + commit_set[next_stable_point_idx].first.second.second  // noise
