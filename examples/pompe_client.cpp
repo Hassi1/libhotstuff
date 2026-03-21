@@ -16,6 +16,7 @@
  */
 
 #include <cassert>
+#include <limits>
 #include <random>
 #include <signal.h>
 #include <sys/time.h>
@@ -46,11 +47,13 @@ using hotstuff::HotStuffError;
 using hotstuff::uint256_t;
 using hotstuff::opcode_t;
 using hotstuff::command_t;
+using hotstuff::TimerEvent;
 
 EventContext ec;
 ReplicaID proposer;
 size_t max_async_num;
 int max_iter_num;
+double target_tps;
 uint32_t cid;
 uint32_t cnt = 0;
 uint32_t nfaulty;
@@ -79,6 +82,7 @@ std::unordered_map<const uint256_t, Request> waiting, waiting_exec;
 std::vector<NetAddr> replicas;
 std::vector<std::pair<struct timeval, double>> elapsed, elapsed_exec;
 Net mn(ec, Net::Config());
+TimerEvent send_timer;
 
 void connect_all() {
     for (size_t i = 0; i < replicas.size(); i++)
@@ -108,6 +112,12 @@ bool try_send(bool check = true) {
     return false;
 }
 
+void schedule_rate_limited_send(TimerEvent &timer) {
+    try_send();
+    if (max_iter_num)
+        timer.add(1.0 / target_tps);
+}
+
 void client_resp_cmd_handler(MsgRespCmd &&msg, const Net::conn_t &) {
     auto &fin = msg.fin;
     HOTSTUFF_LOG_DEBUG("got %s", std::string(msg.fin).c_str());
@@ -129,7 +139,9 @@ void client_resp_cmd_handler(MsgRespCmd &&msg, const Net::conn_t &) {
     elapsed.push_back(std::make_pair(tv, et.elapsed_sec));
 #endif
     waiting.erase(it);
-    while (try_send());
+    if (target_tps <= 0) {
+        while (try_send());
+    }
 }
 
 void client_ordering1_resp_cmd_handler(MsgOrdering1RespCmd &&msg, const Net::conn_t &) {
@@ -200,7 +212,9 @@ void client_ordering2_resp_cmd_handler(MsgOrdering2RespCmd &&msg, const Net::con
     if (last_clock_us == 0 || now_clock_us - last_clock_us < std::max(ONE_SEC * 5, STABLE_PERIOD * 30)) {
         // last consensus response less than 1sec ago
         count_backoff = 0;
-        while (try_send());
+        if (target_tps <= 0) {
+            while (try_send());
+        }
     } else {
         // slowdown the speed of sending requests
         count_backoff++;
@@ -208,7 +222,9 @@ void client_ordering2_resp_cmd_handler(MsgOrdering2RespCmd &&msg, const Net::con
         usleep(ONE_SEC * 3);
         // usleep(ONE_SEC * (1 << count_backoff));
         clock_gettime(CLOCK_MONOTONIC, &last_exec_resp_ts);
-        while (try_send());
+        if (target_tps <= 0) {
+            while (try_send());
+        }
     }
 }
 
@@ -262,7 +278,8 @@ int main(int argc, char **argv) {
     auto opt_idx = Config::OptValInt::create(0);
     auto opt_replicas = Config::OptValStrVec::create();
     auto opt_max_iter_num = Config::OptValInt::create(100);
-    auto opt_max_async_num = Config::OptValInt::create(10);
+    auto opt_max_async_num = Config::OptValInt::create(0);
+    auto opt_target_tps = Config::OptValDouble::create(0.0);
     auto opt_cid = Config::OptValInt::create(-1);
 
     auto shutdown = [&](int) { ec.stop(); };
@@ -284,13 +301,22 @@ int main(int argc, char **argv) {
     config.add_opt("replica", opt_replicas, Config::APPEND);
     config.add_opt("iter", opt_max_iter_num, Config::SET_VAL);
     config.add_opt("max-async", opt_max_async_num, Config::SET_VAL);
+    config.add_opt("tps", opt_target_tps, Config::SET_VAL);
     config.parse(argc, argv);
 
     BATCH_SIZE = opt_blk_size->get();
     STABLE_PERIOD = opt_stable_period->get() * 1000;
     auto idx = opt_idx->get();
     max_iter_num = opt_max_iter_num->get();
-    max_async_num = opt_max_async_num->get();
+    target_tps = opt_target_tps->get();
+    if (target_tps < 0) throw std::invalid_argument("tps must be non-negative");
+    if (opt_max_async_num->get() > 0) {
+        max_async_num = opt_max_async_num->get();
+    } else if (target_tps > 0) {
+        max_async_num = std::numeric_limits<size_t>::max();
+    } else {
+        max_async_num = 10;
+    }
     std::vector<std::string> raw;
     for (const auto &s: opt_replicas->get())
     {
@@ -313,7 +339,14 @@ int main(int argc, char **argv) {
     nfaulty = (replicas.size() - 1) / 3;
     HOTSTUFF_LOG_INFO("nfaulty = %zu", nfaulty);
     connect_all();
-    while (try_send());
+    if (target_tps > 0) {
+        send_timer = TimerEvent(ec, [](TimerEvent &timer) {
+            schedule_rate_limited_send(timer);
+        });
+        schedule_rate_limited_send(send_timer);
+    } else {
+        while (try_send());
+    }
     ec.dispatch();
 
 #ifdef HOTSTUFF_ENABLE_BENCHMARK
