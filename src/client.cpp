@@ -20,6 +20,11 @@ namespace hotstuff {
 
 const opcode_t MsgReqCmd::opcode;
 const opcode_t MsgRespCmd::opcode;
+const opcode_t MsgOrdering1ReqCmd::opcode;
+const opcode_t MsgOrdering1RespCmd::opcode;
+const opcode_t MsgOrdering2ReqCmd::opcode;
+const opcode_t MsgOrdering2RespCmd::opcode;
+const opcode_t MsgConsensusRespClientCmd::opcode;
 //#ifdef HOTSTUFF_AUTOCLI
 //const opcode_t MsgDemandCmd::opcode;
 //#endif
