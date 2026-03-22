@@ -16,6 +16,7 @@
  */
 
 #include <cassert>
+#include <chrono>
 #include <limits>
 #include <random>
 #include <signal.h>
@@ -83,6 +84,8 @@ std::vector<NetAddr> replicas;
 std::vector<std::pair<struct timeval, double>> elapsed, elapsed_exec;
 Net mn(ec, Net::Config());
 TimerEvent send_timer;
+std::chrono::steady_clock::time_point rate_start_tp;
+double rate_sent_budget = 0.0;
 
 void connect_all() {
     for (size_t i = 0; i < replicas.size(); i++)
@@ -113,9 +116,28 @@ bool try_send(bool check = true) {
 }
 
 void schedule_rate_limited_send(TimerEvent &timer) {
-    try_send();
-    if (max_iter_num)
-        timer.add(1.0 / target_tps);
+    const auto now = std::chrono::steady_clock::now();
+    if (rate_start_tp.time_since_epoch().count() == 0) {
+        rate_start_tp = now;
+    }
+
+    const std::chrono::duration<double> elapsed = now - rate_start_tp;
+    const double should_have_sent = elapsed.count() * target_tps;
+    double credit = should_have_sent - rate_sent_budget;
+
+    while (credit >= 1.0 && max_iter_num && try_send()) {
+        rate_sent_budget += 1.0;
+        credit -= 1.0;
+    }
+
+    if (!max_iter_num) return;
+
+    double next_interval = 0.001;
+    if (target_tps > 0) {
+        const double next_token_credit = (rate_sent_budget + 1.0) - should_have_sent;
+        next_interval = std::max(0.001, next_token_credit / target_tps);
+    }
+    timer.add(next_interval);
 }
 
 void client_resp_cmd_handler(MsgRespCmd &&msg, const Net::conn_t &) {
@@ -340,6 +362,8 @@ int main(int argc, char **argv) {
     HOTSTUFF_LOG_INFO("nfaulty = %zu", nfaulty);
     connect_all();
     if (target_tps > 0) {
+        rate_start_tp = std::chrono::steady_clock::now();
+        rate_sent_budget = 0.0;
         send_timer = TimerEvent(ec, [](TimerEvent &timer) {
             schedule_rate_limited_send(timer);
         });
